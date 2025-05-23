@@ -1,93 +1,151 @@
+; === GTA5RP Majestic Clicker with One-Time License Activation, HWID Lock, and Admin Panel ===
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-; === Настройки ===
-clickerScriptURL := "https://raw.githubusercontent.com/Morzuns2029/clic/main/privatscript.ahk"
-clickerScriptFile := "clicker.ahk"
+workKey := "6"
+exitKey := "Esc"
+clickIntervalMin := 8
+clickIntervalMax := 15
+workDuration := 18000
 hwidFile := "activated_hwid.txt"
 settingsFile := "settings.ini"
-keyListURL := "https://raw.githubusercontent.com/Morzuns2029/fog/main/valid_keys.txt"
+clickerScriptFile := "clicker.ahk"
+clickerScriptURL := "https://raw.githubusercontent.com/Morzuns2029/clic/main/privatscript.ahk"
 
+global isRunning := false
+global isPaused := false
+global hudText, hudGui, animationTimer
+global clickTimerRunning := false
+global remainingTime := workDuration
+global timerStartTime := 0
 global thisHWID := GetHWID()
 
-; === Интерфейс ===
-ShowMainPanel() {
+JoinLines(arr) {
+    result := ""
+    for item in arr
+        result .= item "`n"
+    return RTrim(result, "`n")
+}
+
+ShowAdminPanel() {
     panel := Gui("+AlwaysOnTop", "Панель пользователя")
 
-    if !IsActivated() {
-        panel.AddText(, "Введите ключ активации:")
+    activated := false
+    if FileExist(hwidFile) {
+        if InStr(FileRead(hwidFile), thisHWID)
+            activated := true
+    }
+
+    panel.AddText(, "Добро пожаловать!")
+
+    if !activated {
+        panel.AddText(, "Введите ключ для активации:")
         keyInput := panel.AddEdit("w200")
         panel.AddButton("w200", "✅ Активировать").OnEvent("Click", (*) => ActivateKey(keyInput.Value, panel))
     }
 
-    panel.AddButton("w200", "🚀 Запустить кликер").OnEvent("Click", (*) => LaunchClicker(panel))
-    panel.AddButton("w200", "♻ Сбросить активацию").OnEvent("Click", (*) => (panel.Destroy(), ResetActivation(), ShowMainPanel()))
+    panel.AddButton("w200", "🚀 Запустить скрипт").OnEvent("Click", (*) => LaunchScript(panel))
+    panel.AddButton("w200", "♻ Сбросить HWID").OnEvent("Click", (*) => (panel.Destroy(), ResetHWID(), ShowAdminPanel()))
+    panel.AddButton("w200", "⚙ Настройки").OnEvent("Click", (*) => (panel.Destroy(), ShowSettingsPanel()))
     panel.AddButton("w200", "❌ Выход").OnEvent("Click", (*) => ExitApp())
-    panel.Show("w250")
+    panel.Show("w230")
 }
 
-; === Активация ===
-ActivateKey(key, gui) {
+ActivateKey(key, panel) {
     key := Trim(key)
     if key = "" {
-        MsgBox "Введите ключ."
+        MsgBox "Введите ключ!"
         return
     }
 
     try {
         http := ComObject("WinHttp.WinHttpRequest.5.1")
-        http.Open("GET", keyListURL, false)
+        http.Open("GET", "https://raw.githubusercontent.com/Morzuns2029/clic/main/valid_keys.txt", false)
         http.Send()
         if (http.Status != 200) {
-            MsgBox "Ошибка загрузки списка ключей! Код: " http.Status
+            MsgBox "❌ Ошибка загрузки ключей! Код: " http.Status
             return
         }
         keyList := http.ResponseText
     } catch {
-        MsgBox "Не удалось загрузить ключи."
+        MsgBox "❌ Не удалось загрузить ключи."
         return
     }
 
-    validLines := StrSplit(keyList, "`n")
-    found := false
-    updatedLines := []
+    MsgBox "Загружены ключи:`n`n" keyList
 
+    validLines := StrSplit(keyList, "`n")
+    updatedLines := []
+    found := false
     for line in validLines {
-        parts := StrSplit(Trim(line), "|")
+        line := Trim(line)
+        ToolTip "Обрабатывается строка: " line
+        Sleep 800
+
+        parts := StrSplit(line, "|")
         if parts.Length >= 2 {
-            keyPart := parts[1]
-            statusPart := parts.Length >= 3 ? parts[2] : ""
-            if Trim(keyPart) = key && Trim(statusPart) = "unused" {
+            keyFromFile := Trim(parts[1])
+            status := Trim(parts[2])
+            ToolTip "Сравнение:`nВведённый ключ: " key "`nКлюч из файла: " keyFromFile "`nСтатус: " status
+            Sleep 1000
+
+            if keyFromFile = key && status = "unused" {
                 found := true
-                updatedLines.Push(keyPart "|" thisHWID)
+                updatedLines.Push(parts[1] "|" thisHWID)
             } else {
-                updatedLines.Push(Trim(line))
+                updatedLines.Push(line)
             }
-        } else {
-            updatedLines.Push(Trim(line))
         }
     }
 
+    ToolTip ""
+
     if !found {
-        MsgBox "❌ Неверный или использованный ключ."
+        MsgBox "🚫 Неверный или уже использованный ключ!"
         return
     }
 
     FileAppend(thisHWID "`n", hwidFile)
-    MsgBox "✅ Активация прошла успешно!"
-    gui.Destroy()
-    ShowMainPanel()
+    MsgBox "✅ Ключ активирован."
+    panel.Destroy()
+    ShowAdminPanel()
 }
 
-; === Проверка активации ===
-IsActivated() {
-    return FileExist(hwidFile) && InStr(FileRead(hwidFile), thisHWID)
+LaunchScript(panel) {
+    if FileExist(hwidFile) && InStr(FileRead(hwidFile), thisHWID) {
+        panel.Destroy()
+        try {
+            http := ComObject("WinHttp.WinHttpRequest.5.1")
+            http.Open("GET", clickerScriptURL, false)
+            http.Send()
+            if (http.Status != 200) {
+                MsgBox "❌ Ошибка загрузки кликера! Код: " http.Status
+                return
+            }
+            file := FileOpen(clickerScriptFile, "w")
+            file.Write(http.ResponseText)
+            file.Close()
+            if !FileExist(clickerScriptFile) {
+                MsgBox "❌ Ошибка: файл не создан."
+                return
+            }
+        } catch {
+            MsgBox "❌ Не удалось скачать файл: " clickerScriptURL
+            return
+        }
+
+        Run clickerScriptFile
+        ExitApp
+    } else {
+        MsgBox "🔐 Скрипт не активирован. Введите ключ для запуска."
+    }
 }
 
-; === Сброс HWID ===
-ResetActivation() {
-    if !FileExist(hwidFile)
+ResetHWID() {
+    if !FileExist(hwidFile) {
+        MsgBox "Файл HWID не найден."
         return
+    }
     lines := StrSplit(FileRead(hwidFile), "`n")
     newLines := []
     for line in lines {
@@ -95,51 +153,43 @@ ResetActivation() {
             newLines.Push(line)
     }
     FileDelete(hwidFile)
-    FileAppend(Join(newLines, "`n"), hwidFile)
-    MsgBox "Активация сброшена."
+    FileAppend(JoinLines(newLines), hwidFile)
+    MsgBox "✅ HWID сброшен. Повторная активация потребуется."
 }
 
-; === Скачивание и запуск кликера ===
-LaunchClicker(gui) {
-    if !IsActivated() {
-        MsgBox "Сначала активируйте продукт!"
-        return
-    }
+ShowSettingsPanel() {
+    settingsGui := Gui("+AlwaysOnTop", "Настройки")
+    settingsGui.AddText(, "Клавиша запуска/паузы:")
+    workInput := settingsGui.AddEdit("w150", workKey)
+    settingsGui.AddText(, "Клавиша выхода:")
+    exitInput := settingsGui.AddEdit("w150", exitKey)
+    settingsGui.AddButton("w100", "Сохранить").OnEvent("Click", SaveSettings)
+    settingsGui.AddButton("w100", "Назад").OnEvent("Click", (*) => (settingsGui.Destroy(), ShowAdminPanel()))
+    settingsGui.Show()
 
-    try {
-        http := ComObject("WinHttp.WinHttpRequest.5.1")
-        http.Open("GET", clickerScriptURL, false)
-        http.Send()
-        if (http.Status != 200) {
-            MsgBox "Ошибка загрузки кликера. Код: " http.Status
-            return
-        }
-        file := FileOpen(clickerScriptFile, "w")
-        file.Write(http.ResponseText)
-        file.Close()
-        Run clickerScriptFile
-        ExitApp
-    } catch {
-        MsgBox "Не удалось скачать или запустить кликер."
+    SaveSettings(*) {
+        IniWrite(workInput.Value, settingsFile, "Keys", "Work")
+        IniWrite(exitInput.Value, settingsFile, "Keys", "Exit")
+        MsgBox "Настройки сохранены. Перезапустите скрипт."
+        settingsGui.Destroy()
+        ExitApp()
     }
 }
 
-; === HWID ===
+LoadSettings() {
+    if FileExist(settingsFile) {
+        workKey := IniRead(settingsFile, "Keys", "Work", workKey)
+        exitKey := IniRead(settingsFile, "Keys", "Exit", exitKey)
+    }
+}
+
 GetHWID() {
     RunWait("cmd /c wmic csproduct get uuid > hwid.tmp", , "Hide")
     hwid := Trim(FileRead("hwid.tmp"))
     FileDelete("hwid.tmp")
-    return Trim(StrReplace(hwid, "UUID", ""))
+    hwid := StrReplace(hwid, "UUID", "")
+    return Trim(hwid)
 }
 
-; === Утилиты ===
-Join(arr, sep) {
-    result := ""
-    for i, v in arr {
-        result .= (i > 1 ? sep : "") v
-    }
-    return result
-}
-
-; === Запуск ===
-ShowMainPanel()
+LoadSettings()
+ShowAdminPanel()
